@@ -3,10 +3,13 @@
  *   - CDC ACM  (EP1/2/3) : debug serial (printf out, 'b' command in)
  *   - MSC BOT  (EP5/6)   : mass storage for collected messages
  *
- * The MSC side currently exposes a FAT16 RAM disk with a placeholder README;
- * collected peer messages will populate it in a later step. Built on ch32fun's
- * iSLER (2.4GHz BLE-advertising radio) + fsusb. The MSC machinery is adapted
- * from ch32fun's examples_usb/USBFS/usbfs_msc.
+ * The MSC side exposes a read-only FAT16 volume whose file contents live in a
+ * 192 KB region reserved at the top of flash (the "message store"; see
+ * synthpass_ch572.ld). Reads come straight from flash; the boot sector / FAT /
+ * root directory are synthesized. The volume is write-protected to the host --
+ * the firmware will write collected messages into the store itself (later).
+ * Built on ch32fun's iSLER (2.4GHz BLE-advertising radio) + fsusb; the MSC
+ * machinery is adapted from ch32fun's examples_usb/USBFS/usbfs_msc.
  */
 #include "ch32fun.h"
 #include "ch5xxhw.h"
@@ -14,6 +17,7 @@
 #include <stdio.h>
 #include <string.h>
 #include "fsusb.h"
+#include "ch5xx_flash.h"
 
 #include "synthpass.h"
 
@@ -27,13 +31,17 @@
 #define EP_MSC_IN  5   // bulk IN       - MSC data to host
 
 
-// MSD: FAT16 RAM disk (placeholder; will hold collected messages)
-#define MSC_RAM_DISK_SIZE   (4 * 1024)
+// ============================================================================
+// MSD: read-only FAT16 volume backed by a flash "message store"
+// ============================================================================
+// 192 KB reserved at the top of flash (see synthpass_ch572.ld); the linker
+// confines code below MSG_FLASH_ADDR. The data area (file contents) is read
+// directly from flash; the boot sector / FAT / root dir are synthesized.
+#define MSG_FLASH_ADDR      0x0000C000    // 48 KB: start of the reserved store
+#define MSG_FLASH_SIZE      (192 * 1024)  // 192 KB reserved for messages
 #define MSC_BLOCK_SIZE      512
-#define MSC_TOTAL_SECTORS   0x4000      // reported geometry (8 MB)
+#define MSC_TOTAL_SECTORS   0x4000        // reported geometry (8 MB)
 #define FILE_CLUSTER        2
-
-uint8_t msc_ram_disk[MSC_RAM_DISK_SIZE] __attribute__((aligned(4)));
 
 // SECTOR 0: FAT16 Boot Sector (BPB) for an 8MB drive
 const uint8_t BootSector[512] = {
@@ -61,13 +69,12 @@ const uint8_t BootSector[512] = {
 	[511] = 0xAA
 };
 
-// Placeholder file contents (will become the collected-message store later).
+// Placeholder file contents (seeded into flash on first boot; will be replaced
+// by real collected-message data once message writing lands).
 const uint8_t README_TXT[] =
 	"SynthPass message storage.\r\n"
 	"Collected peer messages will appear here.\r\n";
 
-static volatile int file_changed;
-static volatile uint16_t active_file_cluster = FILE_CLUSTER;
 static volatile uint32_t active_file_size = sizeof(README_TXT) - 1;
 
 // Root directory entry for "README.TXT"
@@ -320,7 +327,7 @@ void incoming_frame_handler() {
 
 
 // ============================================================================
-// MSD: SCSI / Bulk-Only Transport
+// MSD: SCSI / Bulk-Only Transport (read-only, backed by flash)
 // ============================================================================
 
 // Decide and send the next IN packet (read / inquiry / etc.), or the CSW.
@@ -340,7 +347,7 @@ void MSC_PrepareDataIn(void) {
 	}
 
 	switch(cbw.CB[0]) {
-	// --- STREAMING DATA COMMANDS (from RAM) ---
+	// --- STREAMING DATA COMMANDS ---
 	case 0x28: { // READ 10
 		uint32_t lba_start = (cbw.CB[2] << 24) | (cbw.CB[3] << 16) | (cbw.CB[4] << 8) | cbw.CB[5];
 
@@ -372,10 +379,7 @@ void MSC_PrepareDataIn(void) {
 		else if (current_lba >= START_ROOT && current_lba < START_DATA) {
 			uint32_t byte_offset_in_sector = (cbw.DataTransferLength - msc_bytes_remaining) % 512;
 			if (current_lba == START_ROOT) {
-				active_file_cluster = FILE_CLUSTER;
 				*(uint32_t*)(RootDirEntry + 28) = active_file_size;
-			}
-			if (current_lba == START_ROOT) {
 				for(int i = 0; i < len_to_send; i++) {
 					int pos = byte_offset_in_sector + i;
 					if (pos < 32) {
@@ -384,12 +388,11 @@ void MSC_PrepareDataIn(void) {
 				}
 			}
 		}
-		// --- 4. Data Area (Cluster 2 starts at START_DATA) ---
+		// --- 4. Data Area: read the file contents directly from flash ---
 		else if (current_lba >= START_DATA) {
-			uint32_t ram_sector_idx = current_lba - START_DATA;
-			uint32_t ram_offset = (ram_sector_idx * 512) + ((cbw.DataTransferLength - msc_bytes_remaining) % 512);
-			if (ram_offset + len_to_send <= MSC_RAM_DISK_SIZE) {
-				memcpy(msc_response_buffer, &msc_ram_disk[ram_offset], len_to_send);
+			uint32_t store_offset = ((current_lba - START_DATA) * 512) + ((cbw.DataTransferLength - msc_bytes_remaining) % 512);
+			if (store_offset + len_to_send <= MSG_FLASH_SIZE) {
+				memcpy(msc_response_buffer, (const void*)(MSG_FLASH_ADDR + store_offset), len_to_send);
 			}
 		}
 
@@ -434,7 +437,8 @@ void MSC_PrepareDataIn(void) {
 
 	case 0x1A: // MODE SENSE 6
 		memset(msc_response_buffer, 0, 4);
-		msc_response_buffer[0] = 3;
+		msc_response_buffer[0] = 3;    // mode data length
+		msc_response_buffer[2] = 0x80; // device-specific param: WP=1 (write protected)
 		len_to_send = 4;
 		src_ptr = msc_response_buffer;
 		is_short_transfer = 1;
@@ -442,7 +446,8 @@ void MSC_PrepareDataIn(void) {
 
 	case 0x5A: // MODE SENSE 10
 		memset(msc_response_buffer, 0, 8);
-		msc_response_buffer[1] = 6;
+		msc_response_buffer[1] = 6;    // mode data length (low byte)
+		msc_response_buffer[3] = 0x80; // device-specific param: WP=1 (write protected)
 		len_to_send = 8;
 		src_ptr = msc_response_buffer;
 		is_short_transfer = 1;
@@ -501,9 +506,6 @@ void HandleDataOut(struct _USBState *ctx, int endp, uint8_t *data, int len) {
 			csw.DataResidue = 0;
 			csw.Status = 0;
 
-			uint32_t lba = (cbw.CB[2] << 24) | (cbw.CB[3] << 16) | (cbw.CB[4] << 8) | cbw.CB[5];
-			uint32_t blocks = (cbw.CB[7] << 8) | cbw.CB[8];
-
 			switch (cbw.CB[0]) {
 			// -- DATA IN COMMANDS --
 			case 0x03: // REQUEST SENSE
@@ -511,24 +513,19 @@ void HandleDataOut(struct _USBState *ctx, int endp, uint8_t *data, int len) {
 			case 0x25: // READ CAPACITY
 			case 0x1A: // MODE SENSE 6
 			case 0x5A: // MODE SENSE 10
+			case 0x28: // READ 10
 				msc_state = MSC_DATA_IN;
 				msc_current_offset = 0;
 				msc_bytes_remaining = cbw.DataTransferLength;
 				MSC_PrepareDataIn();
 				break;
 
-			case 0x28: // READ 10
-				msc_state = MSC_DATA_IN;
-				msc_current_offset = lba * MSC_BLOCK_SIZE;
-				msc_bytes_remaining = blocks * MSC_BLOCK_SIZE;
-				MSC_PrepareDataIn();
-				break;
-
 			// -- DATA OUT COMMANDS --
+			// Read-only volume: still accept the data-out phase so the Bulk-Only
+			// transfer completes cleanly, but the bytes are discarded (below).
 			case 0x2A: // WRITE 10
 				msc_state = MSC_DATA_OUT;
-				msc_current_offset = lba * MSC_BLOCK_SIZE;
-				msc_bytes_remaining = blocks * MSC_BLOCK_SIZE;
+				msc_bytes_remaining = cbw.DataTransferLength;
 				break;
 
 			// -- NO DATA COMMANDS --
@@ -544,40 +541,13 @@ void HandleDataOut(struct _USBState *ctx, int endp, uint8_t *data, int len) {
 			}
 		}
 
-		// --- 2. DATA OUT State: Receiving Data from PC ---
+		// --- 2. DATA OUT State: read-only volume, consume and discard ---
+		// The volume advertises write-protect (MODE SENSE), so the host should
+		// never write. If it does anyway, drain the data phase without persisting
+		// anything, then ACK so the transfer completes.
 		else if (msc_state == MSC_DATA_OUT) {
-			uint32_t write_len = (len < msc_bytes_remaining) ? len : msc_bytes_remaining;
-			uint32_t current_lba = msc_current_offset / 512;
-
-			// --- CASE A: Root Directory Update (snoop for filename) ---
-			if (current_lba >= START_ROOT && current_lba < START_DATA) {
-				for (int i = 0; i < write_len; i += 32) {
-					if (memcmp(data + i, "README  TXT", 11) == 0) {
-						uint16_t new_cluster = data[i + 26] | (data[i + 27] << 8);
-						if (new_cluster != 0) {
-							active_file_cluster = new_cluster;
-							uint32_t new_size = *(uint32_t*)&data[i + 0x1C];
-							active_file_size = (new_size > MSC_RAM_DISK_SIZE) ? MSC_RAM_DISK_SIZE : new_size;
-							file_changed = 1;
-						}
-					}
-				}
-			}
-			// --- CASE B: Data Area Write (filter by cluster) ---
-			else if (current_lba >= START_DATA) {
-				uint32_t target_cluster = 2 + (current_lba - START_DATA) / 8;
-				if (target_cluster >= active_file_cluster) {
-					uint32_t sector_offset = (current_lba - START_DATA) % 8;
-					uint32_t byte_offset = (sector_offset * 512) + (msc_current_offset % 512);
-					if (byte_offset + write_len <= MSC_RAM_DISK_SIZE) {
-						memcpy(&msc_ram_disk[byte_offset], data, write_len);
-					}
-				}
-			}
-
-			msc_current_offset += write_len;
-			msc_bytes_remaining -= write_len;
-
+			uint32_t drained = (len < msc_bytes_remaining) ? len : msc_bytes_remaining;
+			msc_bytes_remaining -= drained;
 			if (msc_bytes_remaining == 0) {
 				msc_state = MSC_SEND_CSW;
 				while(USBFS_SendEndpointNEW(EP_MSC_IN, (uint8_t*)&csw, sizeof(csw), 1) == -1); // -1 == busy
@@ -616,6 +586,28 @@ int HandleSetupCustom(struct _USBState *ctx, int setup_code) {
 }
 
 
+// ============================================================================
+// Flash message store seed
+// ============================================================================
+// Write the placeholder file into the flash store once (on a fresh/blank chip,
+// or whenever the stored content differs). Runs from RAM (__HIGH_CODE) because
+// instructions can't be fetched from flash while it is being erased/programmed.
+// NOTE: ch5xx_flash_cmd_verify is unreliable on this chip (false mismatches);
+// the write is confirmed by memory-mapped readback instead, so we don't use it.
+__HIGH_CODE
+void msgstore_seed_if_blank(void) {
+	uint8_t cur[sizeof(README_TXT)];
+	memcpy(cur, (const void*)MSG_FLASH_ADDR, sizeof(cur));
+	if (memcmp(cur, README_TXT, sizeof(cur)) == 0) {
+		return; // store already holds the placeholder
+	}
+	uint8_t buf[sizeof(README_TXT)];
+	memcpy(buf, README_TXT, sizeof(buf));   // copy out of flash while it is readable
+	ch5xx_flash_cmd_erase(MSG_FLASH_ADDR, sizeof(buf));
+	ch5xx_flash_cmd_write(MSG_FLASH_ADDR, buf, sizeof(buf));
+}
+
+
 int main()
 {
 	SystemInit();
@@ -623,8 +615,9 @@ int main()
 	funGpioInitAll();
 	funPinMode( LED, GPIO_CFGLR_OUT_10Mhz_PP );
 
-	// Seed the RAM disk with the placeholder file.
-	memcpy(msc_ram_disk, README_TXT, sizeof(README_TXT));
+	// Seed the flash store with the placeholder file (firmware flash writes work
+	// on this chip -- the earlier "RDP blocks writes" was a buggy-verify red herring).
+	msgstore_seed_if_blank();
 
 	USBFSSetup();
 
