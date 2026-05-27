@@ -35,9 +35,18 @@ void blink(int n) {
 }
 
 void handle_usbfs_input(int numbytes, uint8_t *data) {
+	// Single-byte 'b' command: drop into the chip's built-in USB ISP bootloader
+	// so SynthPass can be reflashed over USB without the boot button / pin strap
+	// (the strap method doesn't work on CH570/2). Mirrors ch32fun's
+	// usbfs_cdc_tty example. jump_isprom() enters the bootloader and never returns.
+	if(numbytes == 1 && data[0] == 'b') {
+		blink(5);      // visual confirmation the command was received
+		USBFSReset();  // required before jump_isprom() because FUNCONF_USE_USBPRINTF is set
+		jump_isprom(); // enters the USB ISP bootloader; does not return
+	}
 
-		_write(0, (const char*)data, numbytes);
-
+	// Otherwise, echo received bytes back to the host.
+	_write(0, (const char*)data, numbytes);
 }
 
 void synthpass_rx() {
@@ -79,7 +88,7 @@ uint8_t synthpass_broadcast() {
 
 void printf_uid(uint32_t uid) {
 	for(int i = 0; i < 4; ++i) {
-		printf(":%02x", (synthpass_uid >> (8 * i)) & 0xFF);
+		printf(":%02x", (unsigned)((uid >> (8 * i)) & 0xFF));
 	}
 }
 
@@ -164,8 +173,10 @@ void incoming_frame_handler() {
 					.rx_rssi=corrected_rssi
 				};
 
-				// Delay_Ms(10);
-				
+				// Wait for the peer to transition back into RX after its broadcast
+				// before replying, otherwise the PROX arrives while it can't receive.
+				Delay_Ms(10);
+
 				uint8_t status = synthpass_tx(SYNTHPASS_PROX, (uint8_t*)&msg, sizeof(msg));
 
 				// printf("replying with PROX...\n");
