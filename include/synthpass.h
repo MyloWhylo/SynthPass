@@ -104,9 +104,12 @@ typedef struct __attribute__((__packed__)) {
 #define SYNTHPASS_REF_RSSI   0 		// RSSI as received by a NanoCH57x at 1m distance. Used for calibrating RSSI between different synthpass hardware.
 #define SYNTHPASS_REF_RXRSSI 0		// RSSI of received frames sent by a NanoCH57x at 1m distance. This is used to calibrate out differences in RX sensitivity between different synthpass hardware.
 
+#define BOOP_RSSI -30 				// Anything below this is considered boopworathy!
+#define UNBOOP_RSSI -40 			// RSSI this low triggers unboop
+
 #define SYNTHPASS_BROADCAST_PERIOD 1000 // (milliseconds) interval between sending broadcast packets without peers
 #define SYNTHPASS_PROX_PERIOD 200       // (milliseconds) interval between sending broadcast packets with at least one peer responding with PROX messages.
-#define SYNTHPASS_BOOP_PERIOD 20        // (milliseconds) interval between sending broadcast packets with at least one peer
+#define SYNTHPASS_BOOP_PERIOD 100       // (milliseconds) interval between sending broadcast packets with at least one peer
 #define SYNTHPASS_RANDOM_DELAY 20       // (milliseconds) random delay up to this time is added to each broadcast period to avoid repeated collisions.
 
 typedef enum {

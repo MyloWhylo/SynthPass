@@ -114,11 +114,65 @@ static void incoming_frame_handler(void) {
 					printf("PROX peer uid");
 					printf_uid(frame->msg.hdr.sender_uid);
 					printf(" rx_rssi=%d\n", rxData->rx_rssi);
+
+					int32_t corrected_rxrssi = rxData->rx_rssi - SYNTHPASS_REF_RXRSSI;
+
+					if(corrected_rssi > BOOP_RSSI && corrected_rxrssi > BOOP_RSSI) {
+						// Wait for the peer to transition back into RX after its broadcast
+						// before replying, otherwise the BOOP arrives while it can't receive.
+						printf("Boop!\n");
+						
+						Delay_Ms(10);
+						SynthPass_Prox_T msg = {
+							.peer_uid=frame->msg.hdr.sender_uid,
+							.rx_rssi=corrected_rssi
+						};
+						uint8_t status = synthpass_tx(SYNTHPASS_BOOP, (uint8_t*)&msg, sizeof(msg));
+						(void)status;
+						// switch to faster message rate (period is the enum, not the ms value)
+						period = BROADCAST_PERIOD_BOOP;
+						synthpass_rx();
+					}
 				} else {
 					printf("(not for me) PROX\n");
 				}
 			}
 			break;
+		case SYNTHPASS_BOOP:
+			{
+				// Received a response
+				SynthPass_Prox_T *rxData = (SynthPass_Prox_T *) frame->msg.data;
+				if(rxData->peer_uid == synthpass_uid) {
+					printf("BOOP peer uid");
+					printf_uid(frame->msg.hdr.sender_uid);
+					printf(" rx_rssi=%d\n", rxData->rx_rssi);
+
+					// int32_t corrected_rxrssi = rxData->rx_rssi - SYNTHPASS_REF_RXRSSI;
+
+					// // only check RX rssi before ack'ing a boop
+					// if(corrected_rxrssi > BOOP_RSSI) {
+					// 	// Wait for the peer to transition back into RX after its broadcast
+					// 	// before replying, otherwise the BOOP arrives while it can't receive.
+					// 	printf("Boop!\n");
+						
+					// 	Delay_Ms(10);
+					// 	SynthPass_Prox_T msg = {
+					// 		.peer_uid=frame->msg.hdr.sender_uid,
+					// 		.rx_rssi=corrected_rssi
+					// 	};
+					// 	uint8_t status = synthpass_tx(SYNTHPASS_BOOP, (uint8_t*)&msg, sizeof(msg));
+					// 	(void)status;
+					// 	// switch to faster message rate (period is the enum, not the ms value)
+					// 	period = BROADCAST_PERIOD_BOOP;
+					// 	synthpass_rx();
+					// }
+
+					// uint8_t status = synthpass_tx(SYNTHPASS_PROX, (uint8_t*)&msg, sizeof(msg));
+					// (void)status;
+				} else {
+					printf("(not for me) BOOP\n");
+				}
+			}
 		default:
 			printf("Unrecognized type %d\n", type);
 			break;
