@@ -86,7 +86,7 @@ static int insert_peer(uint32_t peer_uid, SynthPass_PeerState_T *peers, int rssi
 	for(int i = 0; i < MAX_PEERS; ++i) {
 		if(peers[i].peer_uid == 0) { // already uninitialized, just return this entry
 
-			printf("uninit %d\r\n", i);
+			// printf("uninit %d\r\n", i);
 			oldest = i;
 			break;
 		}
@@ -97,7 +97,7 @@ static int insert_peer(uint32_t peer_uid, SynthPass_PeerState_T *peers, int rssi
 		}
 	}
 
-	printf("oldest %d\r\n", oldest);
+	// printf("oldest %d\r\n", oldest);
 	// clear the oldest entry
 	peers[oldest].peer_uid = peer_uid;
 	peers[oldest].calib_rssi = rssi;
@@ -108,17 +108,18 @@ static int insert_peer(uint32_t peer_uid, SynthPass_PeerState_T *peers, int rssi
 	return oldest;
 }
 
-static void peer_add_response(SynthPass_PeerState_T *peer, SynthPass_MessageType_T type) {
+static uint8_t peer_add_response(SynthPass_PeerState_T *peer, SynthPass_MessageType_T type) {
 	uint32_t now = funSysTick32();
 	// don't clobber already queue'd responses
 	if(peer->resp.type != 0) {
-		return;
+		return 0;
 	}
 	SynthPass_QueuedResponse_T resp = {
 		.send_at = now + (RESPONSE_DELAY_MS * DELAY_MS_TIME),
 		.type = type
 	};
 	peer->resp = resp;
+	return 1;
 }
 
 static void peer_send_response(SynthPass_PeerState_T *peer) {
@@ -167,20 +168,20 @@ uint8_t is_any_peer_booped(SynthPass_PeerState_T *peers) {
 	return 0;
 }
 
-uint8_t is_any_peer_active(SynthPass_PeerState_T *peers) {
+static uint8_t is_any_peer_active(SynthPass_PeerState_T *peers) {
 	for(uint32_t i = 0; i < MAX_PEERS; ++i) {
 		if(peers[i].peer_uid != 0) return 1;
 	}
 	return 0;
 }
 
-int next_queued_peer_idx(SynthPass_PeerState_T *peers) {
+static int next_queued_peer_idx(SynthPass_PeerState_T *peers) {
 	uint32_t earliest = UINT32_MAX;
 	int earliest_idx = -1;
 	for(uint32_t i = 0; i < MAX_PEERS; ++i) {
 		if(peers[i].peer_uid == 0) continue; // uninitialized, skip
 		if(peers[i].resp.type != SYNTHPASS_BROADCAST) {
-			if(peers[i].resp.send_at < earliest) {
+			if((int32_t)(peers[i].resp.send_at - earliest) < 0) {
 				earliest = peers[i].resp.send_at;
 				earliest_idx = i;
 			}
@@ -192,12 +193,12 @@ int next_queued_peer_idx(SynthPass_PeerState_T *peers) {
 	if((int32_t)(now - earliest) > 0) {
 		return earliest_idx;
 	} else {
-		return 0;
+		return -1;
 	}
 }
 
 // loop through peers and timeout any olds
-void sync_peer_states(SynthPass_PeerState_T *peers) {
+static void sync_peer_states(SynthPass_PeerState_T *peers) {
 	uint32_t now = funSysTick32();
 	for(uint32_t i = 0; i < MAX_PEERS; ++i) {
 		if(peers[i].peer_uid == 0) { // already uninitialized, skip
@@ -269,8 +270,8 @@ static void incoming_frame_handler(SynthPass_PeerState_T *peers) {
 				} else if(peer_state->next_prox == NOBOOP) {
 					peer_add_response(peer_state, SYNTHPASS_PROX);
 				} else if(peer_state->next_prox == UNBOOP) {
-					peer_add_response(peer_state, SYNTHPASS_UNBOOP);
-					peer_state->next_prox = NOBOOP;
+					uint8_t success = peer_add_response(peer_state, SYNTHPASS_UNBOOP);
+					if(success) peer_state->next_prox = NOBOOP;
 				}
 			}
 			break;
@@ -302,7 +303,6 @@ static void incoming_frame_handler(SynthPass_PeerState_T *peers) {
 				if(rxData->peer_uid == synthpass_uid) {
 					printf("BOOP peer uid");
 					printf_uid(frame->msg.hdr.sender_uid);
-;
 					printf(" rssi=%d rx_rssi=%d\r\n", corrected_rssi, rxData->rx_rssi);
 
 					if(corrected_rssi < UNBOOP_RSSI && rxData->rx_rssi < UNBOOP_RSSI) {
@@ -363,7 +363,7 @@ static void synthpass_init(void) {
 	synthpass_rx();
 }
 
-uint32_t next_tx_window;
+static uint32_t next_tx_window;
 
 void radio_init(void) {
 	// we can transmit right away
