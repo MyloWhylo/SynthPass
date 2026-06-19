@@ -115,8 +115,8 @@ typedef struct {
 
 
 // ---- Timing & Calibration parameter ----
-#define SYNTHPASS_REF_RSSI   -3 	// RSSI as received by a NanoCH57x at 1m distance. Used for calibrating RSSI between different synthpass hardware.
-#define SYNTHPASS_REF_RXRSSI -3		// RSSI of received frames sent by a NanoCH57x at 1m distance. This is used to calibrate out differences in RX sensitivity between different synthpass hardware.
+// SYNTHPASS_REF_RSSI / SYNTHPASS_REF_RXRSSI are per-board calibration offsets;
+// they live in board.h since each hardware variant has a different value.
 
 #define BOOP_RSSI -30 				// Anything below this is considered boopworthy!
 #define UNBOOP_RSSI -35 			// RSSI this low triggers unboop

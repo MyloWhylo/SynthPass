@@ -16,16 +16,15 @@
 #include "msgstore.h"
 #include "radio.h"
 #include "synthpass.h"
-
-#define LED PA10
+#include "board.h"
 
 SynthPass_PeerState_T peers[MAX_PEERS];
 
 void blink(int n) {
 	for(int i = n-1; i >= 0; i--) {
-		funDigitalWrite( LED, FUN_LOW ); // Turn on LED
+		LED_ON();
 		Delay_Ms(33);
-		funDigitalWrite( LED, FUN_HIGH ); // Turn off LED
+		LED_OFF();
 		if(i) Delay_Ms(33);
 	}
 }
@@ -35,7 +34,7 @@ int main()
 	SystemInit();
 
 	funGpioInitAll();
-	funPinMode( LED, GPIO_CFGLR_OUT_10Mhz_PP );
+	funPinMode( LED_PIN, GPIO_CFGLR_OUT_10Mhz_PP );
 
 	msgstore_init(); // seed the message store into flash if needed
 	usb_init();      // bring up CDC + MSC
@@ -49,8 +48,8 @@ int main()
 		if(c >= 0) {
 			if(c == 'b') {
 				blink(5);
-				// usb_reset();
-				// jump_isprom(); // enters the USB ISP bootloader; does not return
+				usb_reset();
+				jump_isprom(); // enters the USB ISP bootloader; does not return
 			} else {
 				putchar(c);
 			}

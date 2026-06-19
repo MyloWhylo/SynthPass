@@ -12,6 +12,7 @@
 #include "ch5xxhw.h"
 #include "iSLER.h"
 #include "synthpass.h"
+#include "board.h"
 #include "lib_rand.h"
 
 __attribute__((aligned(4))) static SynthPass_Frame_T tx_frame = {};
