@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SynthPass Web Flasher</title>
+<style>
+  :root {
+    --bg: #111;
+    --fg: #eee;
+    --dim: #888;
+    --accent: #6cf;
+    --err: #f66;
+    --ok: #6f6;
+    --panel: #1a1a1a;
+    --border: #333;
+  }
+  html, body { background: var(--bg); color: var(--fg); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; margin: 0; padding: 0; }
+  body { max-width: 720px; margin: 0 auto; padding: 24px 16px; }
+  h1 { font-size: 1.3em; margin: 0 0 4px; }
+  .sub { color: var(--dim); font-size: 0.9em; margin-bottom: 24px; }
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 16px; margin-bottom: 16px; }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
+  .row:last-child { margin-bottom: 0; }
+  button { background: #222; color: var(--fg); border: 1px solid var(--border); border-radius: 4px; padding: 8px 14px; font: inherit; cursor: pointer; }
+  button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+  input[type=file] { color: var(--dim); font: inherit; }
+  input[type=file]::file-selector-button { background: #222; color: var(--fg); border: 1px solid var(--border); border-radius: 4px; padding: 6px 12px; font: inherit; cursor: pointer; margin-right: 8px; }
+  #info { font-size: 0.9em; color: var(--dim); }
+  #info span { color: var(--fg); }
+  progress { width: 100%; height: 8px; }
+  #log { background: #000; border: 1px solid var(--border); border-radius: 4px; padding: 10px 12px; font-size: 0.85em; margin: 0; max-height: 300px; overflow-y: auto; white-space: pre-wrap; word-break: break-word; }
+  .ok  { color: var(--ok); }
+  .err { color: var(--err); }
+  .dim { color: var(--dim); }
+  .warn { background: #2a1a00; border-color: #553300; }
+  code { background: #000; padding: 1px 4px; border-radius: 3px; }
+</style>
+</head>
+<body>
+
+<h1>SynthPass Web Flasher</h1>
+<div class="sub">Flash a CH572 over WebUSB. Chromium only.</div>
+
+<div id="compat" class="panel warn" hidden>
+  <strong>WebUSB unavailable.</strong> Open this page in a Chromium based browser instead (Firefox / Safari don't expose WebUSB).
+</div>
+
+<div class="panel">
+  <div class="sub">
+    1. Pick a <code>firmware.bin</code> (PlatformIO writes one to <code>.pio/build/genericCH572Q/firmware.bin</code>).<br>
+    2. Click <strong>Flash</strong>.
+    3. Put the board into ISP bootloader mode by holding down the "Boot" button while you plug it in.<br>
+    4. Grant the browser access to the device when prompted.
+  </div>
+</div>
+
+<div class="panel">
+  <div class="row">
+    <input id="file" type="file" accept=".bin">
+  </div>
+  <div class="row">
+    <button id="flash" disabled>Flash</button>
+    <span id="info"></span>
+  </div>
+  <div class="row">
+    <progress id="prog" value="0" max="1"></progress>
+  </div>
+</div>
+
+<pre id="log"></pre>
+
+<script type="module">
+import { WchIsp, hex, formatUid } from "./wch_isp.js";
+
+const $ = (id) => document.getElementById(id);
+const fileInput = $("file");
+const flashBtn  = $("flash");
+const info      = $("info");
+const prog      = $("prog");
+const logEl     = $("log");
+
+if (!("usb" in navigator)) {
+  $("compat").hidden = false;
+  flashBtn.disabled = true;
+  fileInput.disabled = true;
+}
+
+let bin = null;
+
+function log(msg, cls = "") {
+  const line = document.createElement("div");
+  if (cls) line.className = cls;
+  line.textContent = msg;
+  logEl.appendChild(line);
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+function setInfo(text) { info.textContent = text; }
+
+fileInput.addEventListener("change", async () => {
+  const f = fileInput.files[0];
+  if (!f) { bin = null; flashBtn.disabled = true; setInfo(""); return; }
+  bin = new Uint8Array(await f.arrayBuffer());
+  setInfo(`${f.name} — ${bin.length} bytes`);
+  flashBtn.disabled = false;
+});
+
+flashBtn.addEventListener("click", async () => {
+  if (!bin) return;
+  flashBtn.disabled = true;
+  fileInput.disabled = true;
+  prog.value = 0;
+
+  let isp = null;
+  try {
+    log("requesting device…", "dim");
+    isp = await WchIsp.request();
+    log("connected.", "ok");
+
+    log("identifying chip…", "dim");
+    const ct = await isp.identify();
+    log(`  chip_type = 0x${hex(ct, 4)}`);
+
+    log("reading config…", "dim");
+    await isp.readConfig();
+    log(`  UID = ${formatUid(isp.uid)}`);
+    log(`  bootloader = v${isp.bootloaderVersion}`);
+
+    log("sending XOR key…", "dim");
+    await isp.sendKey();
+    log("  key accepted.", "ok");
+
+    log(`erasing (${Math.max(8, Math.ceil(bin.length / 1024))} KiB)…`, "dim");
+    await isp.erase(bin.length);
+    log("  erased.", "ok");
+
+    log(`writing ${bin.length} bytes…`, "dim");
+    await isp.writeBin(bin, 0, (p) => { prog.value = p; });
+    prog.value = 1;
+    log("  write complete.", "ok");
+
+    log("rebooting into app…", "dim");
+    await isp.reboot();
+    log("done.", "ok");
+  } catch (e) {
+    log(`error: ${e.message}`, "err");
+    console.error(e);
+  } finally {
+    if (isp) await isp.close();
+    flashBtn.disabled = false;
+    fileInput.disabled = false;
+  }
+});
+</script>
+
+</body>
+</html>
