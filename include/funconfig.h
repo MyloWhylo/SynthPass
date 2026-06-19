@@ -12,4 +12,7 @@
 #define FUNCONF_DEBUG_HARDFAULT     0
 #define FUNCONF_USE_CLK_SEC         0
 
+// basic rng is good enough for us
+#define RANDOM_STRENGTH    1
+
 #endif

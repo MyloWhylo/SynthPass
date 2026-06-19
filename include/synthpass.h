@@ -26,10 +26,6 @@
 #define SYNTHPASS_CHANNEL 37
 
 
-// ----------------------------
-
-
-
 // ---- SynthPass protocol definitions ----
 typedef struct __attribute__((__packed__)) {
     uint8_t ad_len;     // advertising data unit length, counts remainder of the packet (not including the ad_len byte itself)
@@ -82,43 +78,56 @@ typedef struct __attribute__((__packed__)) {
 } SynthPass_Prox_T; // Prox/Boop/Unboop
 
 typedef struct __attribute__((__packed__)) {
-    uint32_t peer_id;
+    uint32_t peer_uid;
     uint8_t user_info[237];
 } SynthPass_ProxData_T; // ProxData/BoopData
 
 typedef struct __attribute__((__packed__)) {
-    uint32_t peer_id;
+    uint32_t peer_uid;
 } SynthPass_ProxDataAck_T; // ProxDataAck/BoopDataAck
 
 
-// TODO more data on how user_info is stored.
-// We need to mirror the record types in msgstore.h (text, file)
-// with a few limitations, namely size of data for text/files and the length of the filename for file type records.
-// File type records must keep space at the end of the filename (at least one character?) to append a number in case of duplicate
-// filenames. 
+// ---------- Runtime Peer Info -----------
 
-// ----------------------------------------
+#define MAX_PEERS 32
+// responses sent at least this long after the message received (so that they have time to go back into RX mode).
+#define RESPONSE_DELAY_MS 10
+
+// queued response - to be sent back to the peer after a delay
+typedef struct {
+	uint32_t send_at; // systick timestamp to send the message at
+	SynthPass_MessageType_T type; // 0x00/BROADCAST = nothing queued.
+} SynthPass_QueuedResponse_T;
+
+typedef enum {
+	NOBOOP,
+	BOOP,
+	UNBOOP
+} SynthPass_NextProx_T;
+
+typedef struct {
+	uint32_t peer_uid;
+	int calib_rssi; // calibrated rssi, should match what two nanoch57x's would see at the same distance.
+	SynthPass_NextProx_T next_prox; // whether we're booped, unbooped, or not booped. Affects what we'll respond with to the next broadcast.
+	uint32_t last_seen; // milliseconds timestamp when this peer was last seen.
+	SynthPass_QueuedResponse_T resp; // set to a message type/timestamp if we need to respond to this peer.
+} SynthPass_PeerState_T;
 
 
 // ---- Timing & Calibration parameter ----
-#define SYNTHPASS_REF_RSSI   0 		// RSSI as received by a NanoCH57x at 1m distance. Used for calibrating RSSI between different synthpass hardware.
-#define SYNTHPASS_REF_RXRSSI 0		// RSSI of received frames sent by a NanoCH57x at 1m distance. This is used to calibrate out differences in RX sensitivity between different synthpass hardware.
+#define SYNTHPASS_REF_RSSI   -3 	// RSSI as received by a NanoCH57x at 1m distance. Used for calibrating RSSI between different synthpass hardware.
+#define SYNTHPASS_REF_RXRSSI -3		// RSSI of received frames sent by a NanoCH57x at 1m distance. This is used to calibrate out differences in RX sensitivity between different synthpass hardware.
 
-#define BOOP_RSSI -30 				// Anything below this is considered boopworathy!
-#define UNBOOP_RSSI -40 			// RSSI this low triggers unboop
+#define BOOP_RSSI -30 				// Anything below this is considered boopworthy!
+#define UNBOOP_RSSI -35 			// RSSI this low triggers unboop
 
 #define SYNTHPASS_BROADCAST_PERIOD 1000 // (milliseconds) interval between sending broadcast packets without peers
 #define SYNTHPASS_PROX_PERIOD 200       // (milliseconds) interval between sending broadcast packets with at least one peer responding with PROX messages.
 #define SYNTHPASS_BOOP_PERIOD 100       // (milliseconds) interval between sending broadcast packets with at least one peer
 #define SYNTHPASS_RANDOM_DELAY 20       // (milliseconds) random delay up to this time is added to each broadcast period to avoid repeated collisions.
 
-typedef enum {
-    BROADCAST_PERIOD_NORMAL,
-    BROADCAST_PERIOD_PROX,
-    BROADCAST_PERIOD_BOOP
-} Synthpass_BroadcastPeriod_T;
 
-#define SYNTHPASS_TIMEOUT 3000     // (milliseconds) If no BOOP or UNBOOP messages received in this time, assume the boop ended and unboop.
+#define SYNTHPASS_TIMEOUT 3000     // (milliseconds) If no messages received in this time, assume the boop ended and unboop/disconnect peer.
 // ----------------------------------------
 
 #endif

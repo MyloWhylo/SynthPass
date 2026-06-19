@@ -15,8 +15,11 @@
 #include "usb.h"
 #include "msgstore.h"
 #include "radio.h"
+#include "synthpass.h"
 
-#define LED PA11
+#define LED PA10
+
+SynthPass_PeerState_T peers[MAX_PEERS];
 
 void blink(int n) {
 	for(int i = n-1; i >= 0; i--) {
@@ -46,14 +49,14 @@ int main()
 		if(c >= 0) {
 			if(c == 'b') {
 				blink(5);
-				usb_reset();
-				jump_isprom(); // enters the USB ISP bootloader; does not return
+				// usb_reset();
+				// jump_isprom(); // enters the USB ISP bootloader; does not return
 			} else {
 				putchar(c);
 			}
 		}
 
-		usb_task();    // handle MSC transfer
-		radio_task();  // radio rx + periodic broadcast
+		usb_task();    		// handle MSC transfer. returns immediately if no usb transfer happening.
+		radio_task(peers);  // radio rx + periodic broadcast
 	}
 }

@@ -41,3 +41,7 @@ SynthPass communicates using BLE advertising frames with a fixed MAC address so 
 Communication (currently) uses a fixed channel (Channel 37) and PHY mode (1Mbps).
 
 TODO document stuff better :3
+
+## Development
+
+SynthPass uses PlatformIO to handle 
