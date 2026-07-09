@@ -115,11 +115,13 @@ static uint16_t utf8_trim(const uint8_t *buf, uint16_t n) {
 }
 
 // ---- flash writers (MUST run entirely from RAM) ----
-// Trying to run flash operations from flash triggers a reset.
+// Trying to run flash operations from flash triggers a reset. The default ch5xx_flash library
+// does not put the entire functions into __HIGH_CODE, so we must write our own versions here.
 
 // Erase one 4 KB sector (cmd 0x20).
 __HIGH_CODE
 static void flash_erase_sector(uint32_t addr) {
+	addr &= 0xfffff000; // start at a Sector boundary
 	ch5xx_flash_rom_open_erase_write();
 	ch5xx_flash_rom_addr(0x20, addr);
 	ch5xx_flash_rom_wait();
@@ -150,8 +152,11 @@ static void flash_write(uint32_t addr, const uint8_t *buf, int len) {
 	ch5xx_flash_rom_close();
 }
 
+// ---- msgstore interface (can be in flash) ----
+// Since these functions mostly just prepare data to be fed into the above functions,
+// they don't need to live in RAM.
+
 // writes a message record into flash
-__HIGH_CODE
 static void flash_write_record(uint32_t off, uint32_t peer_id, PeerRecordType_T type,
                                const uint8_t *data, uint16_t len) {
 	if (len > MAX_DATA) len = MAX_DATA;
@@ -167,7 +172,6 @@ static void flash_write_record(uint32_t off, uint32_t peer_id, PeerRecordType_T 
 	flash_write(MSG_FLASH_ADDR + off, buf, HDR_SIZE + len);
 }
 
-__HIGH_CODE
 void msgstore_init(void) {
 	// The README record's peer_id (received[0]) doubles as the store-format version. (re)initialize the whole store if it doesn't match
 	SynthPassPeerRecord_T r0 = record_view(RECV_OFF);
@@ -246,7 +250,6 @@ uint16_t msgstore_own_content_len(MsgstoreOwnKind kind) {
 	return (rec_valid_at(off) && r.data_length >= 11) ? (uint16_t)(r.data_length - 11) : 0u;
 }
 
-__HIGH_CODE
 void msgstore_own_set(MsgstoreOwnKind kind, PeerRecordType_T type, const uint8_t name83[11],
                       const uint8_t *content, uint16_t content_len) {
 	if (content_len > MAX_DATA - 11u) content_len = MAX_DATA - 11u;
@@ -259,7 +262,6 @@ void msgstore_own_set(MsgstoreOwnKind kind, PeerRecordType_T type, const uint8_t
 	flash_write_record(off, 0, type, buf, (uint16_t)(11u + content_len));
 }
 
-__HIGH_CODE
 void msgstore_own_clear(MsgstoreOwnKind kind) {
 	uint32_t off = own_off(kind);
 	flash_erase_sector(MSG_FLASH_ADDR + off);
@@ -275,7 +277,6 @@ SynthPassPeerRecord_T msgstore_own_for_boop(void) {
 
 // Erase all received messages and re-seed the README at received[0]. Called
 // when the host deletes MESSAGES.HTM from the volume root.
-__HIGH_CODE
 void msgstore_received_clear(void) {
 	for (uint32_t a = 0; a < RECV_END; a += 0x1000u) {
 		flash_erase_sector(MSG_FLASH_ADDR + a);
@@ -299,7 +300,6 @@ int msgstore_config_read(void *out, uint16_t size) {
 	return 1;
 }
 
-__HIGH_CODE
 void msgstore_config_write(const void *in, uint16_t size) {
 	if (size > 248u) size = 248u;            // header(4) + payload <= 252, comfortably under one page
 	uint8_t buf[256];
@@ -386,7 +386,6 @@ static void dedup_name83(uint8_t n83[11]) {
 }
 
 // add a new message to the store
-__HIGH_CODE
 int msgstore_received_append(uint32_t peer_id, PeerRecordType_T type,
                              const uint8_t *data, uint16_t len) {
 	if (len > MAX_DATA) len = MAX_DATA;

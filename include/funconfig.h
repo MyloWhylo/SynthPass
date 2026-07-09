@@ -12,6 +12,10 @@
 #define FUNCONF_DEBUG_HARDFAULT     0
 #define FUNCONF_USE_CLK_SEC         0
 
+
+#define FUNCONF_ENABLE_HPE          1 // Enable hardware IRQ register stacking for smaller code size + better performance
+#define FUNCONF_ENABLE_XWMEMCPY     1 // memcpy uses dedicated mcpy instruction instead of naive byte read/write loop
+
 // basic rng is good enough for us
 #define RANDOM_STRENGTH    1
 

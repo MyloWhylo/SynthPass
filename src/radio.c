@@ -7,7 +7,6 @@
 #include "radio.h"
 #include <stdint.h>
 #include <stdio.h>
-#include <string.h>
 #include "ch32fun.h"
 #include "ch5xxhw.h"
 #include "iSLER.h"
@@ -456,7 +455,7 @@ static void synthpass_init(void) {
 
 	tx_frame.pdu = 0x02;
 	tx_frame.length = SYNTHPASS_MAC_SIZE;
-	strncpy((char*) tx_frame.mac, SYNTHPASS_MAC, SYNTHPASS_MAC_SIZE);
+	memcpy((char*) tx_frame.mac, SYNTHPASS_MAC, SYNTHPASS_MAC_SIZE);
 
 	tx_frame.msg.hdr.ad_type = 0xFF; // "Manufacturer specific data"
 
