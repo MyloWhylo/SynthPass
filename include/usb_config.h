@@ -6,13 +6,13 @@
 
 // Composite device: CDC (debug serial) on EP1/2/3 + MSC (mass storage) on EP5/6.
 // Adapted from ch32fun's examples_usb/USBFS/usbfs_msc.
-#define FUSB_CONFIG_EPS       7 // Include EP0 in this count
-#define FUSB_EP1_MODE         1 // TX (IN)  - CDC notification (interrupt)
-#define FUSB_EP2_MODE        -1 // RX (OUT) - CDC data out
-#define FUSB_EP3_MODE         1 // TX (IN)  - CDC data in
-#define FUSB_EP4_MODE        -1 // RX (OUT) - unused
-#define FUSB_EP5_MODE         1 // TX (IN)  - MSC data to host
-#define FUSB_EP6_MODE        -1 // RX (OUT) - MSC data from host
+#define FUSB_BUFFERS_NUMBER   7 // Include EP0 in this count
+#define FUSB_EP1_MODE         USBFS_EP_MODE_TX // TX (IN)  - CDC notification (interrupt)
+#define FUSB_EP2_MODE         USBFS_EP_MODE_RX // RX (OUT) - CDC data out
+#define FUSB_EP3_MODE         USBFS_EP_MODE_TX // TX (IN)  - CDC data in
+#define FUSB_EP4_MODE         USBFS_EP_MODE_RX // RX (OUT) - unused
+#define FUSB_EP5_MODE         USBFS_EP_MODE_TX // TX (IN)  - MSC data to host
+#define FUSB_EP6_MODE         USBFS_EP_MODE_RX // RX (OUT) - MSC data from host
 #define FUSB_SUPPORTS_SLEEP   0
 #define FUSB_HID_INTERFACES   0
 #define FUSB_CURSED_TURBO_DMA 0 // Hacky, but seems fine, shaves 2.5us off filling 64-byte buffers.
