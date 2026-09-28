@@ -6163,7 +6163,7 @@
 			)
 		)
 	)
-	(gr_text "R1.1"
+	(gr_text "R${REVISION}"
 		(at 160.3 54 315)
 		(layer "B.SilkS")
 		(uuid "f87aa540-82d5-4e9c-b6bf-fa3bf56be932")
